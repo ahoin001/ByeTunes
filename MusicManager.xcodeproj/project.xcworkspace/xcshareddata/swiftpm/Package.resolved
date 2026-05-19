@@ -1,0 +1,15 @@
+{
+  "originHash" : "56b9c1975432a68f543c792894b96ebb5d6ce9cb75eae6271158066cee500be7",
+  "pins" : [
+    {
+      "identity" : "ffmpeg-kit-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tylerjonesio/ffmpeg-kit-spm",
+      "state" : {
+        "revision" : "b3a2c365e89c5ec8fdc0debd7b7030152b572620",
+        "version" : "5.1.2"
+      }
+    }
+  ],
+  "version" : 3
+}

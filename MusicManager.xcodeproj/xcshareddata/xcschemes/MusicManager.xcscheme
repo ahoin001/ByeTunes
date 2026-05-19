@@ -21,20 +21,6 @@
                ReferencedContainer = "container:MusicManager.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "BB297E992F1F725C00EC8AB8"
-               BuildableName = "MusicManagerShare.appex"
-               BlueprintName = "MusicManagerShare"
-               ReferencedContainer = "container:MusicManager.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

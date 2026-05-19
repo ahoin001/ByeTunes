@@ -79,6 +79,37 @@ Inside your Xcode project and make sure you add:
 
 **In Project Settings > Build Phases > Link Binary With Libraries, make sure libidevice_ffi.a is listed.**
 
+### One-command IPA for Signulous (sideloading)
+
+To build an **unsigned** device IPA you can upload to [Signulous](https://www.signulous.com/sign-apps) (or similar services), run from the repo root:
+
+```bash
+chmod +x setup-build-env.sh build-ipa.sh scripts/*.sh   # first time only
+./setup-build-env.sh   # Xcode check, Rust, Swift packages (safe to re-run)
+./build-ipa.sh
+```
+
+The script will:
+
+1. Install **Rust** + `aarch64-apple-ios` target if needed (to compile `libidevice_ffi.a`)
+2. Clone/build [idevice](https://github.com/jkcoxson/idevice) when `MusicManager/libidevice_ffi.a` is missing
+3. Create `Bridging-Header.h` if needed
+4. Resolve **FFmpegKit** via Swift Package Manager
+5. Build **Release** for a physical iPhone (`arm64`, iOS 16.0+)
+6. Write `dist/ByeTunes-<version>-unsigned.ipa`
+
+Options:
+
+| Flag / env | Purpose |
+|------------|---------|
+| `./build-ipa.sh --clean` | Remove `build/` and `dist/` before building |
+| `./build-ipa.sh --skip-idevice` | Skip Rust/idevice step if you already placed the three files in `MusicManager/` |
+| `IDEVICE_SRC_DIR=~/src/idevice` | Use an existing idevice clone instead of `build/deps/idevice` |
+
+**Requirements:** macOS, Xcode 15+ (tested through Xcode 26), internet on first run (SPM + idevice clone).
+
+**Note:** The IPA is **unsigned** on purpose — Signulous re-signs it for your registered device. The app is already configured for sideloading file imports (`asCopy: true` in the document picker).
+
 ## How to Use
 
 1. **LocalDevVPN**:

@@ -232,7 +232,7 @@ final class AudioConversionService {
 
         writer.startSession(atSourceTime: .zero)
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let queue = DispatchQueue(label: "AudioConversionService.ALACWriter")
             writerInput.requestMediaDataWhenReady(on: queue) {
                 while writerInput.isReadyForMoreMediaData {
