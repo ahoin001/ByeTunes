@@ -666,21 +666,19 @@ struct TabBarButton: View {
 
 
 
-/// Presents `UIDocumentPickerViewController` modally from a host view controller.
-/// Embedding the picker directly in a SwiftUI `.sheet` prevents Open from delivering delegate callbacks.
 struct DocumentPicker: UIViewControllerRepresentable {
     let types: [UTType]
     var allowsMultiple: Bool = false
     var asCopy: Bool = true
     let completion: ([URL]?) -> Void
-
+    
     init(types: [UTType], allowsMultiple: Bool = false, asCopy: Bool = true, completion: @escaping ([URL]?) -> Void) {
         self.types = types
         self.allowsMultiple = allowsMultiple
         self.asCopy = asCopy
         self.completion = completion
     }
-
+    
     init(types: [UTType], asCopy: Bool = true, completion: @escaping (URL?) -> Void) {
         self.types = types
         self.allowsMultiple = false
@@ -689,7 +687,7 @@ struct DocumentPicker: UIViewControllerRepresentable {
             completion(urls?.first)
         }
     }
-
+    
     func makeUIViewController(context: Context) -> DocumentPickerHostViewController {
         let host = DocumentPickerHostViewController()
         host.coordinator = context.coordinator
@@ -698,13 +696,13 @@ struct DocumentPicker: UIViewControllerRepresentable {
         host.allowsMultiple = allowsMultiple
         return host
     }
-
+    
     func updateUIViewController(_ uiViewController: DocumentPickerHostViewController, context: Context) {}
-
+    
     func makeCoordinator() -> Coordinator {
         Coordinator(completion: completion)
     }
-
+    
     final class DocumentPickerHostViewController: UIViewController {
         var coordinator: Coordinator?
         var types: [UTType] = []
@@ -732,11 +730,11 @@ struct DocumentPicker: UIViewControllerRepresentable {
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
         let completion: ([URL]?) -> Void
-
+        
         init(completion: @escaping ([URL]?) -> Void) {
             self.completion = completion
         }
-
+        
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             Logger.shared.log("[DocumentPicker] Picked \(urls.count) file(s): \(urls.map(\.lastPathComponent).joined(separator: ", "))")
             controller.dismiss(animated: true) {
@@ -745,7 +743,7 @@ struct DocumentPicker: UIViewControllerRepresentable {
                 }
             }
         }
-
+        
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             Logger.shared.log("[DocumentPicker] Cancelled")
             controller.dismiss(animated: true) {

@@ -8,19 +8,12 @@ struct ConvertView: View {
     @State private var jobs: [ConversionJob] = []
     @State private var selectedFormat: ConversionTargetFormat = .alacM4A
     @State private var isPickerPresented = false
-    @State private var importReviewSession: ConvertImportReviewSession?
-    @State private var importFailureMessage: String?
     @State private var isConverting = false
-    @State private var isStagingImport = false
     @State private var showToast = false
     @State private var toastTitle = ""
     @State private var toastIcon = ""
     @State private var convertedCount = 0
-
-    private var convertStagingDirectory: URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("convert_import_staging", isDirectory: true)
-    }
+    @State private var pickerErrorMessage: String?
 
     private var successfulOutputs: [URL] {
         jobs.compactMap { job in
@@ -85,27 +78,18 @@ struct ConvertView: View {
 
                 VStack(spacing: 10) {
                     Button {
+                        Logger.shared.log("[ConvertView] Select Files tapped")
                         isPickerPresented = true
                     } label: {
-                        HStack {
-                            if isStagingImport {
-                                ProgressView()
-                                    .tint(.white)
-                                    .padding(.trailing, 6)
-                                Text("Preparing files...")
-                                    .font(.body.weight(.medium))
-                            } else {
-                                Label("Select Files", systemImage: "plus")
-                                    .font(.body.weight(.medium))
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        Label("Select Files", systemImage: "plus")
+                            .font(.body.weight(.medium))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .disabled(isConverting || isStagingImport)
+                    .disabled(isConverting)
 
                     Picker("Output Format", selection: $selectedFormat) {
                         ForEach(ConversionTargetFormat.allCases) { format in
@@ -232,35 +216,28 @@ struct ConvertView: View {
                 .zIndex(100)
             }
         }
-        .fileImporter(
-            isPresented: $isPickerPresented,
-            allowedContentTypes: ConvertFileImport.pickerTypes,
-            allowsMultipleSelection: true
-        ) { result in
-            handleFileImporterResult(result)
-        }
-        .sheet(item: $importReviewSession) { session in
-            ConvertImportReviewSheet(
-                summary: session.summary,
-                isAddDisabled: isStagingImport || isConverting,
-                onAdd: {
-                    importReviewSession = nil
-                    performConvertEnqueue(summary: session.summary)
-                },
-                onCancel: {
-                    importReviewSession = nil
+        .background {
+            if isPickerPresented {
+                DocumentPicker(
+                    types: AudioConversionService.supportedInputTypes,
+                    allowsMultiple: true,
+                    asCopy: false
+                ) { urls in
+                    isPickerPresented = false
+                    beginConvertSelection(with: urls)
                 }
-            )
+                .frame(width: 0, height: 0)
+            }
         }
-        .alert("Import Failed", isPresented: Binding(
-            get: { importFailureMessage != nil },
-            set: { if !$0 { importFailureMessage = nil } }
+        .alert("File Selection Issue", isPresented: Binding(
+            get: { pickerErrorMessage != nil },
+            set: { if !$0 { pickerErrorMessage = nil } }
         )) {
             Button("OK", role: .cancel) {
-                importFailureMessage = nil
+                pickerErrorMessage = nil
             }
         } message: {
-            Text(importFailureMessage ?? "")
+            Text(pickerErrorMessage ?? "")
         }
         .onAppear {
             AudioConversionService.shared.logEngineStatus()
@@ -300,78 +277,72 @@ struct ConvertView: View {
         .background(Color(.systemBackground))
     }
 
-    @MainActor
-    private func handleFileImporterResult(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            Logger.shared.log("[ConvertView] fileImporter returned \(urls.count) item(s)")
-            beginConvertReview(with: urls)
-        case .failure(let error):
-            if isFileImporterUserCancelled(error) {
-                Logger.shared.log("[ConvertView] fileImporter cancelled")
-                showToast(title: "Selection cancelled", icon: "xmark.circle")
-            } else {
-                Logger.shared.log("[ConvertView] fileImporter failed: \(error.localizedDescription)")
-                importFailureMessage = "Could not open file picker: \(error.localizedDescription)"
-            }
+    private func beginConvertSelection(with urls: [URL]?) {
+        guard let urls else {
+            Logger.shared.log("[ConvertView] Picker cancelled")
+            showToast(title: "Selection cancelled", icon: "xmark.circle")
+            return
         }
-    }
 
-    private func isFileImporterUserCancelled(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        if nsError.domain == NSCocoaErrorDomain, nsError.code == CocoaError.userCancelled.rawValue {
-            return true
-        }
-        return nsError.code == NSUserCancelledError
-    }
-
-    @MainActor
-    private func beginConvertReview(with urls: [URL]) {
         guard !urls.isEmpty else {
-            importFailureMessage = "No files were found in your selection."
+            Logger.shared.log("[ConvertView] Picker returned empty selection")
+            pickerErrorMessage = "No files were returned by the Files picker."
             return
         }
 
-        let summary = ConvertFileImport.analyzePickedURLs(urls)
-        Logger.shared.log("[ConvertView] Selection: \(summary.readyCount) ready, \(summary.unsupportedCount) unsupported")
+        let pickedNames = urls.map(\.lastPathComponent)
+        Logger.shared.log("[ConvertView] Picker returned \(urls.count) item(s): \(pickedNames.joined(separator: ", "))")
 
-        if summary.items.isEmpty {
-            importFailureMessage = "No files were found in your selection."
-            return
+        let extensions = Set(urls.map { url in
+            let ext = url.pathExtension.lowercased()
+            return ext.isEmpty ? "unknown" : ext
+        })
+        let unsupported = extensions.filter { ext in
+            guard ext != "unknown" else { return false }
+            return !isLikelyAudioExtension(ext)
+        }
+        if !unsupported.isEmpty {
+            let unsupportedList = unsupported.sorted().map { ".\($0)" }.joined(separator: ", ")
+            Logger.shared.log("[ConvertView] Selection contains unsupported extension(s): \(unsupportedList)")
+            pickerErrorMessage = "Some selected files may not be audio formats: \(unsupportedList)."
         }
 
-        importReviewSession = ConvertImportReviewSession(summary: summary)
+        enqueue(urls: urls)
     }
 
-    private func performConvertEnqueue(summary: ConvertImportSelectionSummary) {
-        guard !isStagingImport, !isConverting else { return }
-
-        let readyItems = summary.items.filter { $0.disposition == .ready }
-        isStagingImport = true
-
-        Task {
-            let staging = ConvertFileImport.stageFiles(readyItems, to: convertStagingDirectory)
-
-            await MainActor.run {
-                defer { isStagingImport = false }
-
-                guard !staging.stagedURLs.isEmpty else {
-                    importFailureMessage = ConvertFileImport.emptyStagingUserMessage(
-                        summary: summary,
-                        staging: staging
-                    )
-                    showToast(title: "Could not add files", icon: "exclamationmark.triangle")
-                    return
-                }
-
-                let newJobs = staging.stagedURLs.map { url in
-                    ConversionJob(sourceURL: url, targetFormat: selectedFormat)
-                }
-                jobs.append(contentsOf: newJobs)
-                Logger.shared.log("[ConvertView] Enqueued \(newJobs.count) job(s)")
-                showToast(title: "Added \(newJobs.count) file(s)", icon: "checkmark.circle.fill")
-            }
+    private func enqueue(urls: [URL]) {
+        let newJobs = urls.map { url in
+            ConversionJob(sourceURL: url, targetFormat: selectedFormat)
         }
+        jobs.append(contentsOf: newJobs)
+
+        let extensionSummary = summarizeExtensions(for: urls)
+        Logger.shared.log("[ConvertView] Enqueued \(newJobs.count) file(s) for conversion. Types: \(extensionSummary)")
+        showToast(title: "Added \(newJobs.count) file(s) • \(extensionSummary)", icon: "checkmark.circle.fill")
+    }
+
+    private func summarizeExtensions(for urls: [URL]) -> String {
+        let counts = Dictionary(grouping: urls) { url -> String in
+            let ext = url.pathExtension.lowercased()
+            return ext.isEmpty ? "unknown" : ext
+        }.mapValues(\.count)
+
+        if counts.isEmpty { return "unknown" }
+        return counts
+            .sorted { lhs, rhs in lhs.key < rhs.key }
+            .map { key, value in
+                key == "unknown" ? "\(value)x no-ext" : "\(value)x .\(key)"
+            }
+            .joined(separator: ", ")
+    }
+
+    private func isLikelyAudioExtension(_ ext: String) -> Bool {
+        let known: Set<String> = [
+            "mp3", "wav", "aiff", "aif", "aifc", "m4a",
+            "flac", "ogg", "opus", "oga", "aac", "alac",
+            "caf", "webm", "mp4", "m4b"
+        ]
+        return known.contains(ext)
     }
 
     private func convertQueue() async {
