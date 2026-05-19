@@ -133,14 +133,14 @@ struct RingtonesView: View {
                 .zIndex(100)
             }
         }
-        .background {
-            if showingPicker {
-                DocumentPicker(types: Self.supportedTypes, allowsMultiple: true) { urls in
-                    showingPicker = false
-                    handleImport(urls)
-                }
-                .frame(width: 0, height: 0)
-            }
+        .filePicker(
+            isPresented: $showingPicker,
+            types: Self.supportedTypes,
+            allowsMultiple: true,
+            defaultAsCopy: true,
+            context: .ringtones
+        ) { urls in
+            handleImport(urls)
         }
     }
     

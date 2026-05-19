@@ -175,10 +175,13 @@ struct ContentView: View {
                 .zIndex(3)
             }
         }
-        .sheet(isPresented: $showingRPPairingUpgradePicker) {
-            DocumentPicker(types: [.data, .xml, .propertyList, .item]) { url in
-                handleRPPairingUpgradeImport(url: url)
-            }
+        .filePicker(
+            isPresented: $showingRPPairingUpgradePicker,
+            types: [.data, .xml, .propertyList, .item],
+            defaultAsCopy: true,
+            context: .settingsPairing
+        ) { url in
+            handleRPPairingUpgradeImport(url: url)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowLogViewer"))) { _ in
             showingLogViewer = true

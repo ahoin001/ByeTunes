@@ -145,6 +145,11 @@ final class AudioConversionService {
         Self.ffmpegPreferredExtensions.contains(url.pathExtension.lowercased())
     }
 
+    /// Copies a security-scoped or external file into the conversion temp directory (e.g. at pick time).
+    func stagePickedSource(_ sourceURL: URL) throws -> URL {
+        try stageInput(sourceURL)
+    }
+
     private func stageInput(_ sourceURL: URL) throws -> URL {
         let accessGranted = sourceURL.startAccessingSecurityScopedResource()
         defer {

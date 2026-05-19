@@ -14,6 +14,7 @@ struct ConvertView: View {
     @State private var toastIcon = ""
     @State private var convertedCount = 0
     @State private var pickerErrorMessage: String?
+    @State private var isStagingSelection = false
 
     private var successfulOutputs: [URL] {
         jobs.compactMap { job in
@@ -81,15 +82,25 @@ struct ConvertView: View {
                         Logger.shared.log("[ConvertView] Select Files tapped")
                         isPickerPresented = true
                     } label: {
-                        Label("Select Files", systemImage: "plus")
-                            .font(.body.weight(.medium))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(Color.accentColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        HStack {
+                            if isStagingSelection {
+                                ProgressView()
+                                    .tint(.white)
+                                    .padding(.trailing, 6)
+                                Text("Preparing files...")
+                                    .font(.body.weight(.medium))
+                            } else {
+                                Label("Select Files", systemImage: "plus")
+                                    .font(.body.weight(.medium))
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .disabled(isConverting)
+                    .disabled(isConverting || isStagingSelection)
 
                     Picker("Output Format", selection: $selectedFormat) {
                         ForEach(ConversionTargetFormat.allCases) { format in
@@ -216,18 +227,14 @@ struct ConvertView: View {
                 .zIndex(100)
             }
         }
-        .background {
-            if isPickerPresented {
-                DocumentPicker(
-                    types: AudioConversionService.supportedInputTypes,
-                    allowsMultiple: true,
-                    asCopy: false
-                ) { urls in
-                    isPickerPresented = false
-                    beginConvertSelection(with: urls)
-                }
-                .frame(width: 0, height: 0)
-            }
+        .filePicker(
+            isPresented: $isPickerPresented,
+            types: AudioConversionService.supportedInputTypes,
+            allowsMultiple: true,
+            defaultAsCopy: false,
+            context: .convert
+        ) { urls in
+            beginConvertSelection(with: urls)
         }
         .alert("File Selection Issue", isPresented: Binding(
             get: { pickerErrorMessage != nil },
@@ -293,21 +300,59 @@ struct ConvertView: View {
         let pickedNames = urls.map(\.lastPathComponent)
         Logger.shared.log("[ConvertView] Picker returned \(urls.count) item(s): \(pickedNames.joined(separator: ", "))")
 
-        let extensions = Set(urls.map { url in
-            let ext = url.pathExtension.lowercased()
-            return ext.isEmpty ? "unknown" : ext
-        })
-        let unsupported = extensions.filter { ext in
-            guard ext != "unknown" else { return false }
-            return !isLikelyAudioExtension(ext)
-        }
-        if !unsupported.isEmpty {
-            let unsupportedList = unsupported.sorted().map { ".\($0)" }.joined(separator: ", ")
-            Logger.shared.log("[ConvertView] Selection contains unsupported extension(s): \(unsupportedList)")
-            pickerErrorMessage = "Some selected files may not be audio formats: \(unsupportedList)."
+        let supported = urls.filter { isSupportedConvertInput($0) }
+        let skipped = urls.count - supported.count
+
+        if supported.isEmpty {
+            let extSummary = summarizeExtensions(for: urls)
+            Logger.shared.log("[ConvertView] No supported audio in selection: \(extSummary)")
+            pickerErrorMessage = "No supported audio files in selection (\(extSummary)). Supported formats include MP3, FLAC, M4A, Opus, Ogg, WAV, and more."
+            return
         }
 
-        enqueue(urls: urls)
+        if skipped > 0 {
+            Logger.shared.log("[ConvertView] Skipped \(skipped) unsupported file(s)")
+            pickerErrorMessage = "Skipped \(skipped) unsupported file(s). Added \(supported.count) to the queue."
+        }
+
+        if FilePickerDebugSettings.convertStageAtPick {
+            isStagingSelection = true
+            Task {
+                var staged: [URL] = []
+                var failed = 0
+                for url in supported {
+                    do {
+                        let copy = try AudioConversionService.shared.stagePickedSource(url)
+                        staged.append(copy)
+                    } catch {
+                        failed += 1
+                        Logger.shared.log("[ConvertView] Stage at pick failed for \(url.lastPathComponent): \(error.localizedDescription)")
+                    }
+                }
+                await MainActor.run {
+                    isStagingSelection = false
+                    if staged.isEmpty {
+                        pickerErrorMessage = "Could not copy selected files into the app. Try enabling a different picker mode in Settings → DEBUG."
+                        return
+                    }
+                    if failed > 0 {
+                        pickerErrorMessage = "Added \(staged.count) file(s); \(failed) could not be prepared."
+                    }
+                    enqueue(urls: staged)
+                }
+            }
+            return
+        }
+
+        enqueue(urls: supported)
+    }
+
+    private func isSupportedConvertInput(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        if ext.isEmpty {
+            return true
+        }
+        return isLikelyAudioExtension(ext)
     }
 
     private func enqueue(urls: [URL]) {

@@ -137,10 +137,13 @@ struct OnboardingView: View {
                 startPulse = true
             }
         }
-        .sheet(isPresented: $showingPairingPicker) {
-            DocumentPicker(types: [.data, .xml, .propertyList, .item]) { url in
-                handlePairingImport(url: url)
-            }
+        .filePicker(
+            isPresented: $showingPairingPicker,
+            types: [.data, .xml, .propertyList, .item],
+            defaultAsCopy: true,
+            context: .settingsPairing
+        ) { url in
+            handlePairingImport(url: url)
         }
         .onChange(of: manager.heartbeatReady, perform: { ready in
             if ready {

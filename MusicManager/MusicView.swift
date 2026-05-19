@@ -423,10 +423,14 @@ struct MusicView: View {
             .zIndex(100)
         }
         }
-        .sheet(isPresented: $showingMusicPicker) {
-            DocumentPicker(types: Self.supportedAudioTypes, allowsMultiple: true) { urls in
-                handleMusicImport(urls: urls)
-            }
+        .filePicker(
+            isPresented: $showingMusicPicker,
+            types: Self.supportedAudioTypes,
+            allowsMultiple: true,
+            defaultAsCopy: true,
+            context: .music
+        ) { urls in
+            handleMusicImport(urls: urls)
         }
         .sheet(item: $selectedSongForMatch) { item in
             if let index = songs.firstIndex(where: { $0.id == item.id }) {

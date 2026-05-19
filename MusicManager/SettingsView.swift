@@ -47,6 +47,13 @@ struct SettingsView: View {
     @AppStorage("yoinkifyFormat") private var yoinkifyFormat = "flac"
     @AppStorage("qobuzFallbackQuality") private var qobuzFallbackQuality = "27"
     @AppStorage("tidalFallbackQuality") private var tidalFallbackQuality = "LOSSLESS"
+
+    @AppStorage(FilePickerDebugSettings.presentationKey) private var debugPickerPresentation = FilePickerPresentationMode.auto.rawValue
+    @AppStorage(FilePickerDebugSettings.asCopyOverrideKey) private var debugPickerAsCopyOverride = FilePickerAsCopyOverride.auto.rawValue
+    @AppStorage(FilePickerDebugSettings.verboseLoggingKey) private var debugPickerVerboseLogging = false
+    @AppStorage(FilePickerDebugSettings.convertStageAtPickKey) private var debugConvertStageAtPick = false
+    @AppStorage(FilePickerDebugSettings.convertShowReviewSheetKey) private var debugConvertShowReviewSheet = false
+    @AppStorage(FilePickerDebugSettings.lastEventKey) private var debugPickerLastEvent = "No events yet"
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -811,6 +818,131 @@ struct SettingsView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color(.systemGray5), lineWidth: 1)
                     )
+
+                    Text("Change picker mode without rebuilding. Convert Auto uses fileImporter; Music Auto uses full-screen host.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+
+                    VStack(spacing: 0) {
+                        HStack {
+                            Image(systemName: "doc.badge.gearshape")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                                .frame(width: 28)
+                            Text("Presentation")
+                                .font(.body)
+                            Spacer()
+                            Picker("", selection: $debugPickerPresentation) {
+                                ForEach(FilePickerPresentationMode.allCases) { mode in
+                                    Text(mode.label).tag(mode.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        HStack {
+                            Image(systemName: "arrow.down.doc")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                                .frame(width: 28)
+                            Text("asCopy override")
+                                .font(.body)
+                            Spacer()
+                            Picker("", selection: $debugPickerAsCopyOverride) {
+                                ForEach(FilePickerAsCopyOverride.allCases) { mode in
+                                    Text(mode.label).tag(mode.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        Toggle(isOn: $debugPickerVerboseLogging) {
+                            HStack {
+                                Image(systemName: "text.alignleft")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+                                Text("Verbose picker logs")
+                                    .font(.body)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        Toggle(isOn: $debugConvertStageAtPick) {
+                            HStack {
+                                Image(systemName: "tray.and.arrow.down")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+                                Text("Convert: stage at pick")
+                                    .font(.body)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        Toggle(isOn: $debugConvertShowReviewSheet) {
+                            HStack {
+                                Image(systemName: "list.bullet.rectangle")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Convert: review sheet")
+                                        .font(.body)
+                                    Text("Not wired — direct queue only")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .disabled(true)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "clock")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+                                Text("Last picker event")
+                                    .font(.body)
+                                Spacer()
+                            }
+                            Text(debugPickerLastEvent)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.leading, 28)
+                        }
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 16)
+                    }
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(.systemGray5), lineWidth: 1)
+                    )
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -851,15 +983,21 @@ struct SettingsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 100)
         }
-        .sheet(isPresented: $showingPairingPicker) {
-            DocumentPicker(types: [.data, .xml, .propertyList, .item]) { url in
-                handlePairingImport(url: url)
-            }
+        .filePicker(
+            isPresented: $showingPairingPicker,
+            types: [.data, .xml, .propertyList, .item],
+            defaultAsCopy: true,
+            context: .settingsPairing
+        ) { url in
+            handlePairingImport(url: url)
         }
-        .sheet(isPresented: $showingDownloadFolderPicker) {
-            DocumentPicker(types: [.folder], asCopy: false) { url in
-                handleDownloadFolderSelection(url: url)
-            }
+        .filePicker(
+            isPresented: $showingDownloadFolderPicker,
+            types: [.folder],
+            defaultAsCopy: false,
+            context: .settingsFolder
+        ) { url in
+            handleDownloadFolderSelection(url: url)
         }
         .sheet(isPresented: $showingDownloaderSettings) {
             NavigationStack {

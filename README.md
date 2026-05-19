@@ -108,7 +108,7 @@ Options:
 
 **Requirements:** macOS, Xcode 15+ (tested through Xcode 26), internet on first run (SPM + idevice clone).
 
-**Note:** The IPA is **unsigned** on purpose — Signulous re-signs it for your registered device. The app is already configured for sideloading file imports (`asCopy: true` in the document picker).
+**Note:** The IPA is **unsigned** on purpose — Signulous re-signs it for your registered device. File import uses a unified picker (`fileImporter` on Convert, full-screen host on Music). In **Settings → DEBUG → File picker experiments** you can switch presentation modes on device without rebuilding.
 
 ## How to Use
 
