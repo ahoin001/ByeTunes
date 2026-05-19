@@ -43,6 +43,8 @@ struct MusicView: View {
     @State private var detectedDuplicates: [DuplicateCandidate] = []
     @State private var duplicateImportSelection: [UUID: Bool] = [:]
     @State private var showingDuplicateSheet = false
+    @State private var importReviewSession: MusicImportReviewSession?
+    @State private var importFailureMessage: String?
 
     struct DuplicateCandidate: Identifiable {
         let id = UUID()
@@ -52,13 +54,6 @@ struct MusicView: View {
     }
 
     
-    static var supportedAudioTypes: [UTType] {
-        var types: [UTType] = [.mp3, .wav, .aiff, .mpeg4Audio, .audio, .folder]
-        if let flac = UTType(filenameExtension: "flac") { types.append(flac) }
-        if let m4a = UTType(filenameExtension: "m4a") { types.append(m4a) }
-        return types
-    }
-
     private var importStagingDirectory: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("music_import_staging", isDirectory: true)
     }
@@ -424,9 +419,39 @@ struct MusicView: View {
         }
         }
         .sheet(isPresented: $showingMusicPicker) {
-            DocumentPicker(types: Self.supportedAudioTypes, allowsMultiple: true) { urls in
-                handleMusicImport(urls: urls)
+            DocumentPicker(
+                types: MusicFileImport.pickerTypes,
+                allowsMultiple: true,
+                asCopy: false
+            ) { urls in
+                beginImportReview(with: urls)
             }
+        }
+        .sheet(item: $importReviewSession) { session in
+            MusicImportReviewSheet(
+                summary: session.summary,
+                onImport: {
+                    importReviewSession = nil
+                    performMusicImport(summary: session.summary)
+                },
+                onOpenConvert: {
+                    importReviewSession = nil
+                    openConvertTab?()
+                },
+                onCancel: {
+                    importReviewSession = nil
+                }
+            )
+        }
+        .alert("Import Failed", isPresented: Binding(
+            get: { importFailureMessage != nil },
+            set: { if !$0 { importFailureMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                importFailureMessage = nil
+            }
+        } message: {
+            Text(importFailureMessage ?? "")
         }
         .sheet(item: $selectedSongForMatch) { item in
             if let index = songs.firstIndex(where: { $0.id == item.id }) {
@@ -563,9 +588,29 @@ struct MusicView: View {
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
     
-    func handleMusicImport(urls: [URL]?) {
-        guard let urls = urls, !urls.isEmpty else { return }
-        
+    @MainActor
+    func beginImportReview(with urls: [URL]?) {
+        guard let urls, !urls.isEmpty else {
+            if urls != nil {
+                showToast(title: "Import cancelled", icon: "xmark.circle")
+            }
+            return
+        }
+
+        Logger.shared.log("[MusicView] Picker returned \(urls.count) item(s)")
+        let summary = MusicFileImport.analyzePickedURLs(urls)
+        Logger.shared.log("[MusicView] Selection: \(summary.readyCount) music, \(summary.convertCount) convert, \(summary.unsupportedCount) unsupported")
+
+        if summary.items.isEmpty {
+            importFailureMessage = "No files were found in your selection."
+            return
+        }
+
+        showingMusicPicker = false
+        importReviewSession = MusicImportReviewSession(summary: summary)
+    }
+
+    func performMusicImport(summary: MusicImportSelectionSummary) {
         let metadataSource = UserDefaults.standard.string(forKey: "metadataSource") ?? "local"
         let useiTunes = (metadataSource == "itunes")
         let autofetch = UserDefaults.standard.bool(forKey: "autofetchMetadata")
@@ -574,14 +619,7 @@ struct MusicView: View {
         let stagingDirectory = importStagingDirectory
         
         Task {
-            var stagedURLs: [URL] = []
-            var skippedCount = 0
             var shouldExtractArtworkDuringImport = true
-            
-            func isSupportedAudio(_ url: URL) -> Bool {
-                let ext = url.pathExtension.lowercased()
-                return ["mp3", "wav", "aiff", "m4a", "flac"].contains(ext)
-            }
 
             func cleanedFallbackImportName(from url: URL) -> String {
                 let raw = url.deletingPathExtension().lastPathComponent
@@ -607,38 +645,22 @@ struct MusicView: View {
 
                 return cleaned.isEmpty ? raw : cleaned
             }
-            
-            func stageFile(_ sourceURL: URL) {
-                guard isSupportedAudio(sourceURL) else { return }
-                let safeName = sourceURL.lastPathComponent
-                let ext = sourceURL.pathExtension.lowercased()
-                let stagedName = "\(UUID().uuidString)_\(safeName)"
-                let destURL = stagingDirectory.appendingPathComponent(stagedName)
-                
-                do {
-                    try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                    stagedURLs.append(destURL)
-                } catch {
-                    skippedCount += 1
-                    Task { @MainActor in
-                        Logger.shared.log("[MusicView] Copy failed for \(safeName): \(error)")
-                    }
-                    let fallbackURL = stagingDirectory.appendingPathComponent("\(UUID().uuidString)_\(sourceURL.deletingPathExtension().lastPathComponent).\(ext)")
-                    if FileManager.default.fileExists(atPath: sourceURL.path) {
-                        do {
-                            let data = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
-                            try data.write(to: fallbackURL, options: .atomic)
-                            stagedURLs.append(fallbackURL)
-                            Task { @MainActor in
-                                Logger.shared.log("[MusicView] Data fallback copy succeeded for \(safeName)")
-                            }
-                        } catch {
-                            Task { @MainActor in
-                                Logger.shared.log("[MusicView] Data fallback copy failed for \(safeName): \(error)")
-                            }
-                        }
+
+            let staging = MusicFileImport.stageFiles(summary.items, to: stagingDirectory)
+            let stagedURLs = staging.stagedURLs
+            let skippedCount = staging.skippedCount
+
+            guard !stagedURLs.isEmpty else {
+                let message = MusicFileImport.emptyStagingUserMessage(summary: summary, staging: staging)
+                await MainActor.run {
+                    self.importFailureMessage = message
+                    if summary.convertCount > 0 && summary.readyCount == 0 {
+                        self.showToast(title: "Use Convert tab for these formats", icon: "arrow.triangle.2.circlepath")
+                    } else {
+                        self.showToast(title: "No songs imported", icon: "exclamationmark.triangle")
                     }
                 }
+                return
             }
             
             func enrichSong(from localURL: URL) async -> SongMetadata {
@@ -697,29 +719,6 @@ struct MusicView: View {
                 
                 return song
             }
-
-            do {
-                try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
-            } catch {
-                Logger.shared.log("[MusicView] Failed to create staging directory: \(error)")
-            }
-            
-            for url in urls {
-                var isDir: ObjCBool = false
-                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                    let accessGranted = url.startAccessingSecurityScopedResource()
-                    defer { if accessGranted { url.stopAccessingSecurityScopedResource() } }
-                    
-                    let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
-                    while let fileURL = enumerator?.nextObject() as? URL {
-                        stageFile(fileURL)
-                    }
-                } else {
-                    let accessGranted = url.startAccessingSecurityScopedResource()
-                    defer { if accessGranted { url.stopAccessingSecurityScopedResource() } }
-                    stageFile(url)
-                }
-            }
             
             await MainActor.run {
                 self.isImporting = true
@@ -738,7 +737,9 @@ struct MusicView: View {
                 enrichmentConcurrency = 4
             }
             shouldExtractArtworkDuringImport = stagedURLs.count <= 100
-            Logger.shared.log("[MusicView] Staging completed. Staged \(stagedURLs.count) file(s), skipped \(skippedCount).")
+            if skippedCount > 0 {
+                Logger.shared.log("[MusicView] \(skippedCount) file(s) failed staging; see Debug Logs for details")
+            }
             Logger.shared.log("[MusicView] Using enrichment concurrency: \(enrichmentConcurrency)")
             let importChunkSize = stagedURLs.count > 200 ? 100 : stagedURLs.count
             Logger.shared.log("[MusicView] Using import chunk size: \(importChunkSize)")
@@ -827,7 +828,7 @@ struct MusicView: View {
 
             await MainActor.run {
                 if foundDuplicates.isEmpty {
-                    let totalSkipped = skippedCount
+                    let totalSkipped = skippedCount + summary.convertCount + summary.unsupportedCount
                     let title: String
                     if totalSkipped > 0 {
                         title = "Imported \(alreadyImportedCount), Skipped \(totalSkipped)"
@@ -835,6 +836,14 @@ struct MusicView: View {
                         title = alreadyImportedCount == 1 ? "Imported 1 Song" : "Imported \(alreadyImportedCount) Songs"
                     }
                     showToast(title: title, icon: "checkmark.circle.fill")
+                    if summary.convertCount > 0 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                            self.showToast(
+                                title: "\(summary.convertCount) file(s) need Convert tab",
+                                icon: "arrow.triangle.2.circlepath"
+                            )
+                        }
+                    }
                 } else {
                     pendingImportedSongs = foundDuplicates.map(\.incoming)
                     pendingAlreadyImportedCount = alreadyImportedCount

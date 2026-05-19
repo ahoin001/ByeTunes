@@ -709,11 +709,15 @@ struct DocumentPicker: UIViewControllerRepresentable {
         }
         
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            completion(urls)
+            DispatchQueue.main.async {
+                self.completion(urls)
+            }
         }
         
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            completion(nil)
+            DispatchQueue.main.async {
+                self.completion(nil)
+            }
         }
     }
 }

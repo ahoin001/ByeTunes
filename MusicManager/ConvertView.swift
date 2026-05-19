@@ -258,7 +258,12 @@ struct ConvertView: View {
     }
 
     private func enqueue(urls: [URL]?) {
-        guard let urls, !urls.isEmpty else { return }
+        guard let urls, !urls.isEmpty else {
+            if urls != nil {
+                showToast(title: "No files selected", icon: "xmark.circle")
+            }
+            return
+        }
 
         let newJobs = urls.map { url in
             ConversionJob(sourceURL: url, targetFormat: selectedFormat)
