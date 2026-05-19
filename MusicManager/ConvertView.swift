@@ -11,6 +11,7 @@ struct ConvertView: View {
     @State private var importReviewSession: ConvertImportReviewSession?
     @State private var importFailureMessage: String?
     @State private var isConverting = false
+    @State private var isStagingImport = false
     @State private var showToast = false
     @State private var toastTitle = ""
     @State private var toastIcon = ""
@@ -86,15 +87,25 @@ struct ConvertView: View {
                     Button {
                         isPickerPresented = true
                     } label: {
-                        Label("Select Files", systemImage: "plus")
-                            .font(.body.weight(.medium))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(Color.accentColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        HStack {
+                            if isStagingImport {
+                                ProgressView()
+                                    .tint(.white)
+                                    .padding(.trailing, 6)
+                                Text("Preparing files...")
+                                    .font(.body.weight(.medium))
+                            } else {
+                                Label("Select Files", systemImage: "plus")
+                                    .font(.body.weight(.medium))
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .disabled(isConverting)
+                    .disabled(isConverting || isStagingImport)
 
                     Picker("Output Format", selection: $selectedFormat) {
                         ForEach(ConversionTargetFormat.allCases) { format in
@@ -221,22 +232,17 @@ struct ConvertView: View {
                 .zIndex(100)
             }
         }
-        .background {
-            if isPickerPresented {
-                DocumentPicker(
-                    types: ConvertFileImport.pickerTypes,
-                    allowsMultiple: true,
-                    asCopy: false
-                ) { urls in
-                    isPickerPresented = false
-                    beginConvertReview(with: urls)
-                }
-                .frame(width: 0, height: 0)
-            }
+        .fileImporter(
+            isPresented: $isPickerPresented,
+            allowedContentTypes: ConvertFileImport.pickerTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            handleFileImporterResult(result)
         }
         .sheet(item: $importReviewSession) { session in
             ConvertImportReviewSheet(
                 summary: session.summary,
+                isAddDisabled: isStagingImport || isConverting,
                 onAdd: {
                     importReviewSession = nil
                     performConvertEnqueue(summary: session.summary)
@@ -294,15 +300,38 @@ struct ConvertView: View {
         .background(Color(.systemBackground))
     }
 
-    private func beginConvertReview(with urls: [URL]?) {
-        guard let urls, !urls.isEmpty else {
-            if urls != nil {
+    @MainActor
+    private func handleFileImporterResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            Logger.shared.log("[ConvertView] fileImporter returned \(urls.count) item(s)")
+            beginConvertReview(with: urls)
+        case .failure(let error):
+            if isFileImporterUserCancelled(error) {
+                Logger.shared.log("[ConvertView] fileImporter cancelled")
                 showToast(title: "Selection cancelled", icon: "xmark.circle")
+            } else {
+                Logger.shared.log("[ConvertView] fileImporter failed: \(error.localizedDescription)")
+                importFailureMessage = "Could not open file picker: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func isFileImporterUserCancelled(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == CocoaError.userCancelled.rawValue {
+            return true
+        }
+        return nsError.code == NSUserCancelledError
+    }
+
+    @MainActor
+    private func beginConvertReview(with urls: [URL]) {
+        guard !urls.isEmpty else {
+            importFailureMessage = "No files were found in your selection."
             return
         }
 
-        Logger.shared.log("[ConvertView] Picker returned \(urls.count) item(s)")
         let summary = ConvertFileImport.analyzePickedURLs(urls)
         Logger.shared.log("[ConvertView] Selection: \(summary.readyCount) ready, \(summary.unsupportedCount) unsupported")
 
@@ -315,17 +344,23 @@ struct ConvertView: View {
     }
 
     private func performConvertEnqueue(summary: ConvertImportSelectionSummary) {
+        guard !isStagingImport, !isConverting else { return }
+
         let readyItems = summary.items.filter { $0.disposition == .ready }
+        isStagingImport = true
 
         Task {
             let staging = ConvertFileImport.stageFiles(readyItems, to: convertStagingDirectory)
 
             await MainActor.run {
+                defer { isStagingImport = false }
+
                 guard !staging.stagedURLs.isEmpty else {
                     importFailureMessage = ConvertFileImport.emptyStagingUserMessage(
                         summary: summary,
                         staging: staging
                     )
+                    showToast(title: "Could not add files", icon: "exclamationmark.triangle")
                     return
                 }
 
@@ -333,6 +368,7 @@ struct ConvertView: View {
                     ConversionJob(sourceURL: url, targetFormat: selectedFormat)
                 }
                 jobs.append(contentsOf: newJobs)
+                Logger.shared.log("[ConvertView] Enqueued \(newJobs.count) job(s)")
                 showToast(title: "Added \(newJobs.count) file(s)", icon: "checkmark.circle.fill")
             }
         }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConvertImportReviewSheet: View {
     let summary: ConvertImportSelectionSummary
+    var isAddDisabled: Bool = false
     let onAdd: () -> Void
     let onCancel: () -> Void
 
@@ -126,6 +127,7 @@ struct ConvertImportReviewSheet: View {
                     .padding(.vertical, 14)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(isAddDisabled)
             } else {
                 Text("No files can be converted from this selection.")
                     .font(.subheadline)
