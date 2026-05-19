@@ -216,8 +216,16 @@ enum MusicFileImport {
     }
 
     static func stageFile(from sourceURL: URL, to stagingDirectory: URL) -> Result<URL, StagingFailure> {
+        stageFile(from: sourceURL, to: stagingDirectory, allowedExtensions: directMusicExtensions)
+    }
+
+    static func stageFile(
+        from sourceURL: URL,
+        to stagingDirectory: URL,
+        allowedExtensions: Set<String>
+    ) -> Result<URL, StagingFailure> {
         let ext = sourceURL.pathExtension.lowercased()
-        guard directMusicExtensions.contains(ext) else {
+        guard allowedExtensions.contains(ext) else {
             return .failure(.message("Unsupported format (.\(ext.isEmpty ? "?" : ext))"))
         }
 

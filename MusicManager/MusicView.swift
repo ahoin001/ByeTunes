@@ -418,13 +418,17 @@ struct MusicView: View {
             .zIndex(100)
         }
         }
-        .sheet(isPresented: $showingMusicPicker) {
-            DocumentPicker(
-                types: MusicFileImport.pickerTypes,
-                allowsMultiple: true,
-                asCopy: false
-            ) { urls in
-                beginImportReview(with: urls)
+        .background {
+            if showingMusicPicker {
+                DocumentPicker(
+                    types: MusicFileImport.pickerTypes,
+                    allowsMultiple: true,
+                    asCopy: false
+                ) { urls in
+                    showingMusicPicker = false
+                    beginImportReview(with: urls)
+                }
+                .frame(width: 0, height: 0)
             }
         }
         .sheet(item: $importReviewSession) { session in
@@ -606,7 +610,6 @@ struct MusicView: View {
             return
         }
 
-        showingMusicPicker = false
         importReviewSession = MusicImportReviewSession(summary: summary)
     }
 

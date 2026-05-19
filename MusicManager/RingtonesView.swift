@@ -133,9 +133,13 @@ struct RingtonesView: View {
                 .zIndex(100)
             }
         }
-        .sheet(isPresented: $showingPicker) {
-            DocumentPicker(types: Self.supportedTypes, allowsMultiple: true) { urls in
-                handleImport(urls)
+        .background {
+            if showingPicker {
+                DocumentPicker(types: Self.supportedTypes, allowsMultiple: true) { urls in
+                    showingPicker = false
+                    handleImport(urls)
+                }
+                .frame(width: 0, height: 0)
             }
         }
     }

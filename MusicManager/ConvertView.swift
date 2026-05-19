@@ -8,11 +8,18 @@ struct ConvertView: View {
     @State private var jobs: [ConversionJob] = []
     @State private var selectedFormat: ConversionTargetFormat = .alacM4A
     @State private var isPickerPresented = false
+    @State private var importReviewSession: ConvertImportReviewSession?
+    @State private var importFailureMessage: String?
     @State private var isConverting = false
     @State private var showToast = false
     @State private var toastTitle = ""
     @State private var toastIcon = ""
     @State private var convertedCount = 0
+
+    private var convertStagingDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("convert_import_staging", isDirectory: true)
+    }
 
     private var successfulOutputs: [URL] {
         jobs.compactMap { job in
@@ -214,10 +221,40 @@ struct ConvertView: View {
                 .zIndex(100)
             }
         }
-        .sheet(isPresented: $isPickerPresented) {
-            DocumentPicker(types: AudioConversionService.supportedInputTypes, allowsMultiple: true, asCopy: false) { urls in
-                enqueue(urls: urls)
+        .background {
+            if isPickerPresented {
+                DocumentPicker(
+                    types: ConvertFileImport.pickerTypes,
+                    allowsMultiple: true,
+                    asCopy: false
+                ) { urls in
+                    isPickerPresented = false
+                    beginConvertReview(with: urls)
+                }
+                .frame(width: 0, height: 0)
             }
+        }
+        .sheet(item: $importReviewSession) { session in
+            ConvertImportReviewSheet(
+                summary: session.summary,
+                onAdd: {
+                    importReviewSession = nil
+                    performConvertEnqueue(summary: session.summary)
+                },
+                onCancel: {
+                    importReviewSession = nil
+                }
+            )
+        }
+        .alert("Import Failed", isPresented: Binding(
+            get: { importFailureMessage != nil },
+            set: { if !$0 { importFailureMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                importFailureMessage = nil
+            }
+        } message: {
+            Text(importFailureMessage ?? "")
         }
         .onAppear {
             AudioConversionService.shared.logEngineStatus()
@@ -257,19 +294,48 @@ struct ConvertView: View {
         .background(Color(.systemBackground))
     }
 
-    private func enqueue(urls: [URL]?) {
+    private func beginConvertReview(with urls: [URL]?) {
         guard let urls, !urls.isEmpty else {
             if urls != nil {
-                showToast(title: "No files selected", icon: "xmark.circle")
+                showToast(title: "Selection cancelled", icon: "xmark.circle")
             }
             return
         }
 
-        let newJobs = urls.map { url in
-            ConversionJob(sourceURL: url, targetFormat: selectedFormat)
+        Logger.shared.log("[ConvertView] Picker returned \(urls.count) item(s)")
+        let summary = ConvertFileImport.analyzePickedURLs(urls)
+        Logger.shared.log("[ConvertView] Selection: \(summary.readyCount) ready, \(summary.unsupportedCount) unsupported")
+
+        if summary.items.isEmpty {
+            importFailureMessage = "No files were found in your selection."
+            return
         }
-        jobs.append(contentsOf: newJobs)
-        showToast(title: "Added \(newJobs.count) file(s)", icon: "checkmark.circle.fill")
+
+        importReviewSession = ConvertImportReviewSession(summary: summary)
+    }
+
+    private func performConvertEnqueue(summary: ConvertImportSelectionSummary) {
+        let readyItems = summary.items.filter { $0.disposition == .ready }
+
+        Task {
+            let staging = ConvertFileImport.stageFiles(readyItems, to: convertStagingDirectory)
+
+            await MainActor.run {
+                guard !staging.stagedURLs.isEmpty else {
+                    importFailureMessage = ConvertFileImport.emptyStagingUserMessage(
+                        summary: summary,
+                        staging: staging
+                    )
+                    return
+                }
+
+                let newJobs = staging.stagedURLs.map { url in
+                    ConversionJob(sourceURL: url, targetFormat: selectedFormat)
+                }
+                jobs.append(contentsOf: newJobs)
+                showToast(title: "Added \(newJobs.count) file(s)", icon: "checkmark.circle.fill")
+            }
+        }
     }
 
     private func convertQueue() async {
