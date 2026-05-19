@@ -125,6 +125,7 @@
 			);
 			name = MusicManager;
 			packageProductDependencies = (
+				BBFFPKG22F0D700100BB151F /* FFmpeg-Kit */,
 			);
 			productName = MusicManager;
 			productReference = BB302E1A2F0D69FD00BB151F /* MusicManager.app */;
@@ -209,6 +210,7 @@
 			mainGroup = BB302E112F0D69FD00BB151F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				BBFFPKG12F0D700100BB151F /* XCRemoteSwiftPackageReference "ffmpeg-kit-spm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BB302E1B2F0D69FD00BB151F /* Products */;
@@ -611,6 +613,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BBFFPKG12F0D700100BB151F /* XCRemoteSwiftPackageReference "ffmpeg-kit-spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tylerjonesio/ffmpeg-kit-spm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.1.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BBFFPKG22F0D700100BB151F /* FFmpeg-Kit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BBFFPKG12F0D700100BB151F /* XCRemoteSwiftPackageReference "ffmpeg-kit-spm" */;
+			productName = "FFmpeg-Kit";
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BB302E122F0D69FD00BB151F /* Project object */;
 }

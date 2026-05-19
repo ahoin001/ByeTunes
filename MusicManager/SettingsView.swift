@@ -502,6 +502,8 @@ struct SettingsView: View {
                                 Text("  When you share audio files to MusicManager from other apps (like Files), they are automatically injected to your device if connected.")
                                 Text("• Supported Music Formats:")
                                 Text("  MP3, M4A, FLAC, WAV, AIFF")
+                                Text("• Convert Tab:")
+                                Text("  Opus/Ogg via FFmpegKit; outputs ALAC or AAC (.m4a)")
                                 Text("• Supported Ringtone Formats:")
                                 Text("  M4R only (MP3 ringtones must be added manually inside the app)")
                             }

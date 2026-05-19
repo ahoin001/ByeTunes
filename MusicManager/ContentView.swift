@@ -100,6 +100,15 @@ struct ContentView: View {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return version.majorVersion >= 26
     }
+
+    private var showRingtonesTab: Bool {
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        return (16...18).contains(major)
+    }
+
+    private var ringtoneTabIndex: Int? {
+        showRingtonesTab ? 1 : nil
+    }
     
     var body: some View {
         ZStack {
@@ -276,7 +285,9 @@ struct ContentView: View {
                     let ringtone = await RingtoneMetadata.fromURL(destURL)
                     await MainActor.run {
                         ringtones.append(ringtone)
-                        selectedTab = 1
+                        if let ringtoneTabIndex {
+                            selectedTab = ringtoneTabIndex
+                        }
                         Logger.shared.log("[ContentView] Added ringtone: \(ringtone.name)")
                         autoInjectRingtones([ringtone])
                     }
@@ -405,7 +416,9 @@ struct ContentView: View {
                     let ringtone = await RingtoneMetadata.fromURL(fileURL)
                     await MainActor.run {
                         ringtones.append(ringtone)
-                        selectedTab = 1 
+                        if let ringtoneTabIndex {
+                            selectedTab = ringtoneTabIndex
+                        }
                     }
                 } else if ["mp3", "m4a", "wav", "flac", "aiff"].contains(ext) {
                     
@@ -562,8 +575,9 @@ private struct AppUpdatePrompt: View {
 struct FloatingTabBar: View {
     @Binding var selectedTab: Int
     let showRingtonesTab: Bool
-    private var downloadTabIndex: Int { showRingtonesTab ? 2 : 1 }
-    private var settingsTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var convertTabIndex: Int { showRingtonesTab ? 2 : 1 }
+    private var downloadTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var settingsTabIndex: Int { showRingtonesTab ? 4 : 3 }
     
     var body: some View {
         HStack(spacing: 0) {
@@ -587,6 +601,14 @@ struct FloatingTabBar: View {
                 ) {
                     selectedTab = 1
                 }
+            }
+
+            TabBarButton(
+                icon: "arrow.triangle.2.circlepath",
+                title: "Convert",
+                isSelected: selectedTab == convertTabIndex
+            ) {
+                selectedTab = convertTabIndex
             }
 
             TabBarButton(
@@ -632,7 +654,7 @@ struct TabBarButton: View {
                     .font(.caption2)
             }
             .foregroundColor(isSelected ? .blue : .gray)
-            .frame(width: 80, height: 50)
+            .frame(maxWidth: .infinity, minHeight: 50)
             .background(
                 isSelected ?
                     Capsule().fill(Color.blue.opacity(0.1)) :

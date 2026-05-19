@@ -6,6 +6,7 @@ struct MusicView: View {
     @Binding var songs: [SongMetadata]
     @Binding var isInjecting: Bool
     @Binding var status: String
+    var openConvertTab: (() -> Void)? = nil
     
     struct PlaylistModel: Identifiable, Hashable {
         let name: String
@@ -64,6 +65,13 @@ struct MusicView: View {
 
     private var shouldHideQueueDuringLargeImport: Bool {
         isImporting && totalImportCount > 100
+    }
+
+    private var riskyQueueSongCount: Int {
+        songs.filter { song in
+            let ext = song.localURL.pathExtension.lowercased()
+            return ["flac", "opus", "ogg"].contains(ext)
+        }.count
     }
     
     var body: some View {
@@ -218,6 +226,37 @@ struct MusicView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+                    )
+                }
+
+                if riskyQueueSongCount > 0 && !isInjecting && !shouldHideQueueDuringLargeImport {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                            .foregroundColor(.blue)
+                            .font(.headline)
+                        Text("\(riskyQueueSongCount) file(s) may not play in Apple Music. Convert to ALAC/AAC before injecting.")
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(.blue)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 8)
+                        Button("Convert") {
+                            openConvertTab?()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.14))
+                        .foregroundColor(.blue)
+                        .clipShape(Capsule())
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.blue.opacity(0.10))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.blue.opacity(0.2), lineWidth: 1)
                     )
                 }
 

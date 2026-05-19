@@ -9,8 +9,9 @@ struct LegacyTabBarView: View {
     @Binding var status: String
     @Binding var selectedTab: Int
     @Binding var showingLogViewer: Bool
-    private var downloadTabIndex: Int { showRingtonesTab ? 2 : 1 }
-    private var settingsTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var convertTabIndex: Int { showRingtonesTab ? 2 : 1 }
+    private var downloadTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var settingsTabIndex: Int { showRingtonesTab ? 4 : 3 }
     private var showRingtonesTab: Bool {
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         return (16...18).contains(major)
@@ -28,10 +29,15 @@ struct LegacyTabBarView: View {
                         manager: manager,
                         songs: $songs,
                         isInjecting: $isInjecting,
-                        status: $status
+                        status: $status,
+                        openConvertTab: {
+                            selectedTab = convertTabIndex
+                        }
                     )
                 } else if showRingtonesTab && selectedTab == 1 {
                     RingtonesView(manager: manager, ringtones: $ringtones)
+                } else if selectedTab == convertTabIndex {
+                    ConvertView(songs: $songs, status: $status)
                 } else if selectedTab == downloadTabIndex {
                     DownloadView(songs: $songs, status: $status)
                 } else {
@@ -69,8 +75,9 @@ struct ModernTabView: View {
     @Binding var status: String
     @Binding var selectedTab: Int
     @Binding var showingLogViewer: Bool
-    private var downloadTabIndex: Int { showRingtonesTab ? 2 : 1 }
-    private var settingsTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var convertTabIndex: Int { showRingtonesTab ? 2 : 1 }
+    private var downloadTabIndex: Int { showRingtonesTab ? 3 : 2 }
+    private var settingsTabIndex: Int { showRingtonesTab ? 4 : 3 }
     private var showRingtonesTab: Bool {
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         return (16...18).contains(major)
@@ -82,7 +89,10 @@ struct ModernTabView: View {
                 manager: manager,
                 songs: $songs,
                 isInjecting: $isInjecting,
-                status: $status
+                status: $status,
+                openConvertTab: {
+                    selectedTab = convertTabIndex
+                }
             )
             .tabItem {
                 Label("Music", systemImage: "music.note")
@@ -96,6 +106,12 @@ struct ModernTabView: View {
                     }
                     .tag(1)
             }
+
+            ConvertView(songs: $songs, status: $status)
+                .tabItem {
+                    Label("Convert", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tag(convertTabIndex)
 
             DownloadView(songs: $songs, status: $status)
                 .tabItem {

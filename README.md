@@ -34,6 +34,12 @@ You can find idevice and compile it from here: [https://github.com/jkcoxson/idev
 
 *If you don't have these files, the project will not compile.*
 
+### FFmpegKit (Convert tab)
+
+The **Convert** tab uses [ffmpeg-kit-spm](https://github.com/tylerjonesio/ffmpeg-kit-spm) (Swift Package Manager) for Opus/Ogg and other formats that iOS cannot decode natively. Xcode resolves this dependency automatically on first open/build.
+
+**Note:** FFmpegKit is LGPL-licensed. Review license terms before distributing builds.
+
 ### Build Steps
 
 1.  Install Rust:
@@ -90,6 +96,10 @@ Inside your Xcode project and make sure you add:
 3.  **Add Music**:
     -   Tap "Add Songs" and select files from your Files app.
     -   Hit "Inject to Device" and watch the magic happen.
+
+3b. **Convert incompatible audio (Opus, Ogg, FLAC, etc.)**:
+    -   Open the **Convert** tab, select multiple files, choose **ALAC (.m4a)** or **AAC (.m4a)**.
+    -   Tap **Convert**, then **Add Converted to Music Queue** before injecting.
       
 4.  **Ringtones**:
     -   Go to the Ringtones tab, add your file, and inject!
