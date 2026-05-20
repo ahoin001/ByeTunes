@@ -888,10 +888,16 @@ struct SettingsView: View {
                                     .font(.body)
                                     .foregroundColor(.primary)
                                     .frame(width: 28)
-                                Text("Convert: stage at pick")
-                                    .font(.body)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Convert: stage at pick")
+                                        .font(.body)
+                                    Text("Always on in production")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                             }
                         }
+                        .disabled(true)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 16)
 

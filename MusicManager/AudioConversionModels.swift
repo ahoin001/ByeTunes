@@ -55,6 +55,8 @@ struct ConversionJob: Identifiable, Equatable {
     var status: ConversionJobStatus
     var startedAt: Date?
     var completedAt: Date?
+    /// Tags read from the source file when enqueued (same approach as Music import).
+    var preservedMetadata: PreservedTrackMetadata?
 
     init(
         id: UUID = UUID(),
@@ -63,7 +65,8 @@ struct ConversionJob: Identifiable, Equatable {
         outputURL: URL? = nil,
         status: ConversionJobStatus = .queued,
         startedAt: Date? = nil,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        preservedMetadata: PreservedTrackMetadata? = nil
     ) {
         self.id = id
         self.sourceURL = sourceURL
@@ -72,10 +75,22 @@ struct ConversionJob: Identifiable, Equatable {
         self.status = status
         self.startedAt = startedAt
         self.completedAt = completedAt
+        self.preservedMetadata = preservedMetadata
     }
 
     var fileName: String {
         sourceURL.lastPathComponent
+    }
+
+    var displayTitle: String {
+        preservedMetadata?.title ?? sourceURL.deletingPathExtension().lastPathComponent
+    }
+
+    var displaySubtitle: String {
+        if let meta = preservedMetadata {
+            return "\(meta.artist) • \(meta.album)"
+        }
+        return targetFormat.title
     }
 }
 

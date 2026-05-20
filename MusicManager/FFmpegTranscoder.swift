@@ -20,9 +20,16 @@ enum FFmpegTranscoder {
             codecArgs = "-c:a aac -b:a 256k"
         }
 
-        // -vn: audio-only output; movflags helps Apple Music–friendly m4a containers.
-        let command = "-y -i \"\(inputPath)\" -vn \(codecArgs) -movflags +faststart \"\(outputPath)\""
+        // -map_metadata 0: preserve tags from source; -vn: audio-only output.
+        let command = "-y -i \"\(inputPath)\" -vn \(codecArgs) -map_metadata 0 -movflags +faststart \"\(outputPath)\""
+        try await runCommand(command)
 
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            throw AudioConversionError.conversionFailed("FFmpeg did not produce an output file")
+        }
+    }
+
+    static func runCommand(_ command: String) async throws {
         Logger.shared.log("[FFmpegTranscoder] Running: ffmpeg \(command)")
 
         let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
@@ -40,13 +47,9 @@ enum FFmpegTranscoder {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            let message = detail.isEmpty ? "FFmpeg conversion failed" : String(detail.suffix(1200))
+            let message = detail.isEmpty ? "FFmpeg command failed" : String(detail.suffix(1200))
             Logger.shared.log("[FFmpegTranscoder] Failed: \(message)")
             throw AudioConversionError.conversionFailed(message)
-        }
-
-        guard FileManager.default.fileExists(atPath: outputPath) else {
-            throw AudioConversionError.conversionFailed("FFmpeg did not produce an output file")
         }
     }
 }

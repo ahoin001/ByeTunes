@@ -44,10 +44,13 @@ final class AudioConversionService {
 
     private let fm = FileManager.default
     private let conversionDirectory: URL
+    private let importStagingDirectory: URL
 
     private init() {
         conversionDirectory = fm.temporaryDirectory.appendingPathComponent("converted_audio", isDirectory: true)
+        importStagingDirectory = fm.temporaryDirectory.appendingPathComponent("convert_import_staging", isDirectory: true)
         try? fm.createDirectory(at: conversionDirectory, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: importStagingDirectory, withIntermediateDirectories: true)
     }
 
     var isFFmpegAvailable: Bool {
@@ -74,22 +77,57 @@ final class AudioConversionService {
                 )
             }
             try await FFmpegTranscoder.convert(inputURL: stagedInput, outputURL: outputURL, target: target)
-            return outputURL
+        } else {
+            do {
+                switch target {
+                case .aacM4A:
+                    try await convertToAAC(stagedInput, outputURL: outputURL)
+                case .alacM4A:
+                    try await convertToALAC(stagedInput, outputURL: outputURL)
+                }
+            } catch {
+                guard isFFmpegAvailable else { throw error }
+                Logger.shared.log("[AudioConversion] AVFoundation failed for \(stagedInput.lastPathComponent), retrying with FFmpeg: \(error.localizedDescription)")
+                try await FFmpegTranscoder.convert(inputURL: stagedInput, outputURL: outputURL, target: target)
+            }
+        }
+
+        try await embedTagsFromSource(sourceURL, into: outputURL)
+        return outputURL
+    }
+
+    /// Stages a picked file like Music import (full filename preserved, tags intact).
+    func stageImportSource(_ sourceURL: URL) throws -> URL {
+        let accessGranted = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let safeName = sourceURL.lastPathComponent
+        let ext = sourceURL.pathExtension.lowercased()
+        let stagedName = ext.isEmpty ? "\(UUID().uuidString)_\(safeName)" : "\(UUID().uuidString)_\(safeName)"
+        let destURL = importStagingDirectory.appendingPathComponent(stagedName)
+
+        if fm.fileExists(atPath: destURL.path) {
+            try? fm.removeItem(at: destURL)
         }
 
         do {
-            switch target {
-            case .aacM4A:
-                try await convertToAAC(stagedInput, outputURL: outputURL)
-            case .alacM4A:
-                try await convertToALAC(stagedInput, outputURL: outputURL)
-            }
-            return outputURL
+            try fm.copyItem(at: sourceURL, to: destURL)
         } catch {
-            guard isFFmpegAvailable else { throw error }
-            Logger.shared.log("[AudioConversion] AVFoundation failed for \(stagedInput.lastPathComponent), retrying with FFmpeg: \(error.localizedDescription)")
-            try await FFmpegTranscoder.convert(inputURL: stagedInput, outputURL: outputURL, target: target)
-            return outputURL
+            let data = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+            try data.write(to: destURL, options: .atomic)
+        }
+
+        return destURL
+    }
+
+    func removeStagedImports(urls: [URL]) {
+        for url in urls {
+            guard url.path.hasPrefix(importStagingDirectory.path) else { continue }
+            try? fm.removeItem(at: url)
         }
     }
 
@@ -147,7 +185,17 @@ final class AudioConversionService {
 
     /// Copies a security-scoped or external file into the conversion temp directory (e.g. at pick time).
     func stagePickedSource(_ sourceURL: URL) throws -> URL {
-        try stageInput(sourceURL)
+        try stageImportSource(sourceURL)
+    }
+
+    private func embedTagsFromSource(_ sourceURL: URL, into outputURL: URL) async throws {
+        guard fm.fileExists(atPath: outputURL.path) else { return }
+        guard FFmpegTranscoder.isAvailable else { return }
+        do {
+            try await AudioMetadataPreservation.copyTagsFromSource(sourceURL: sourceURL, outputURL: outputURL)
+        } catch {
+            Logger.shared.log("[AudioConversion] Tag embed skipped for \(outputURL.lastPathComponent): \(error.localizedDescription)")
+        }
     }
 
     private func stageInput(_ sourceURL: URL) throws -> URL {
@@ -189,6 +237,7 @@ final class AudioConversionService {
 
         session.outputURL = outputURL
         session.outputFileType = .m4a
+        await AudioMetadataPreservation.applyExportSessionMetadata(from: inputURL, to: session)
         await session.export()
 
         if session.status != .completed {

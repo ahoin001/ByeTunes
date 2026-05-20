@@ -161,6 +161,11 @@ struct ConvertView: View {
                             Text(queueSummaryText)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
+                            Button("Clear", role: .destructive) {
+                                clearQueue()
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .disabled(isConverting)
                         }
                     }
 
@@ -255,15 +260,22 @@ struct ConvertView: View {
     private func conversionRow(_ job: ConversionJob) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                Image(systemName: icon(for: job.status))
-                    .foregroundColor(color(for: job.status))
+                if case .converting = job.status {
+                    ProgressView()
+                        .scaleEffect(0.85)
+                        .frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: icon(for: job.status))
+                        .foregroundColor(color(for: job.status))
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(job.fileName)
+                    Text(job.displayTitle)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text(job.targetFormat.title)
+                    Text(job.displaySubtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Text(statusLabel(for: job.status))
@@ -315,36 +327,45 @@ struct ConvertView: View {
             pickerErrorMessage = "Skipped \(skipped) unsupported file(s). Added \(supported.count) to the queue."
         }
 
-        if FilePickerDebugSettings.convertStageAtPick {
-            isStagingSelection = true
-            Task {
-                var staged: [URL] = []
-                var failed = 0
-                for url in supported {
-                    do {
-                        let copy = try AudioConversionService.shared.stagePickedSource(url)
-                        staged.append(copy)
-                    } catch {
-                        failed += 1
-                        Logger.shared.log("[ConvertView] Stage at pick failed for \(url.lastPathComponent): \(error.localizedDescription)")
+        stageAndEnqueue(urls: supported)
+    }
+
+    private func stageAndEnqueue(urls: [URL]) {
+        isStagingSelection = true
+        Task {
+            var stagedJobs: [(URL, PreservedTrackMetadata?)] = []
+            var failed = 0
+
+            for url in urls {
+                let accessGranted = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessGranted {
+                        url.stopAccessingSecurityScopedResource()
                     }
                 }
-                await MainActor.run {
-                    isStagingSelection = false
-                    if staged.isEmpty {
-                        pickerErrorMessage = "Could not copy selected files into the app. Try enabling a different picker mode in Settings → DEBUG."
-                        return
-                    }
-                    if failed > 0 {
-                        pickerErrorMessage = "Added \(staged.count) file(s); \(failed) could not be prepared."
-                    }
-                    enqueue(urls: staged)
+
+                do {
+                    let stagedURL = try AudioConversionService.shared.stageImportSource(url)
+                    let metadata = await AudioMetadataPreservation.capture(from: stagedURL)
+                    stagedJobs.append((stagedURL, metadata))
+                } catch {
+                    failed += 1
+                    Logger.shared.log("[ConvertView] Stage failed for \(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
-            return
-        }
 
-        enqueue(urls: supported)
+            await MainActor.run {
+                isStagingSelection = false
+                if stagedJobs.isEmpty {
+                    pickerErrorMessage = "Could not copy selected files into the app. Try a different picker mode in Settings → DEBUG."
+                    return
+                }
+                if failed > 0 {
+                    pickerErrorMessage = "Added \(stagedJobs.count) file(s); \(failed) could not be prepared."
+                }
+                enqueue(stagedJobs: stagedJobs)
+            }
+        }
     }
 
     private func isSupportedConvertInput(_ url: URL) -> Bool {
@@ -355,15 +376,31 @@ struct ConvertView: View {
         return isLikelyAudioExtension(ext)
     }
 
-    private func enqueue(urls: [URL]) {
-        let newJobs = urls.map { url in
-            ConversionJob(sourceURL: url, targetFormat: selectedFormat)
+    private func enqueue(stagedJobs: [(URL, PreservedTrackMetadata?)]) {
+        let newJobs = stagedJobs.map { stagedURL, metadata in
+            ConversionJob(
+                sourceURL: stagedURL,
+                targetFormat: selectedFormat,
+                preservedMetadata: metadata
+            )
         }
         jobs.append(contentsOf: newJobs)
 
+        let urls = stagedJobs.map(\.0)
         let extensionSummary = summarizeExtensions(for: urls)
         Logger.shared.log("[ConvertView] Enqueued \(newJobs.count) file(s) for conversion. Types: \(extensionSummary)")
         showToast(title: "Added \(newJobs.count) file(s) • \(extensionSummary)", icon: "checkmark.circle.fill")
+    }
+
+    private func clearQueue() {
+        guard !isConverting else { return }
+        let sourceURLs = jobs.map(\.sourceURL)
+        let outputURLs = jobs.compactMap(\.outputURL)
+        AudioConversionService.shared.removeStagedImports(urls: sourceURLs)
+        AudioConversionService.shared.removeTemporaryOutputs(urls: outputURLs)
+        jobs.removeAll()
+        convertedCount = 0
+        showToast(title: "Queue cleared", icon: "trash")
     }
 
     private func summarizeExtensions(for urls: [URL]) -> String {
@@ -391,61 +428,81 @@ struct ConvertView: View {
     }
 
     private func convertQueue() async {
-        isConverting = true
-        convertedCount = 0
-        status = "Converting files..."
-
-        let pendingIndices = jobs.indices.filter { !jobs[$0].status.isTerminal }
-        for index in pendingIndices {
-            jobs[index].status = .converting
-            jobs[index].targetFormat = selectedFormat
+        await MainActor.run {
+            isConverting = true
+            convertedCount = 0
+            status = "Converting files..."
         }
 
-        let results = await AudioConversionService.shared.convertBatch(
-            jobs: pendingIndices.map { jobs[$0] },
-            to: selectedFormat,
-            maxConcurrentJobs: 1
-        )
+        let pendingIndices = await MainActor.run {
+            jobs.indices.filter { !jobs[$0].status.isTerminal }
+        }
 
-        for (resultIndex, jobIndex) in pendingIndices.enumerated() {
-            let result = results[resultIndex]
-            jobs[jobIndex].targetFormat = selectedFormat
-            jobs[jobIndex].startedAt = jobs[jobIndex].startedAt ?? Date()
+        let total = pendingIndices.count
+        var completedInRun = 0
 
-            switch result.status {
-            case .success:
-                jobs[jobIndex].outputURL = result.outputURL
-                jobs[jobIndex].status = .success
-                jobs[jobIndex].completedAt = Date()
-                convertedCount += 1
-            case .failed(let message):
-                jobs[jobIndex].status = .failed(message)
-                jobs[jobIndex].completedAt = Date()
-                Logger.shared.log("[ConvertView] Conversion failed for \(jobs[jobIndex].fileName): \(message)")
-            default:
-                break
+        for (runIndex, jobIndex) in pendingIndices.enumerated() {
+            await MainActor.run {
+                jobs[jobIndex].status = .converting
+                jobs[jobIndex].targetFormat = selectedFormat
+                jobs[jobIndex].startedAt = Date()
+                status = "Converting \(runIndex + 1)/\(total): \(jobs[jobIndex].displayTitle)"
+            }
+
+            let sourceURL = await MainActor.run { jobs[jobIndex].sourceURL }
+            do {
+                let outputURL = try await AudioConversionService.shared.convert(sourceURL, to: selectedFormat)
+                await MainActor.run {
+                    jobs[jobIndex].outputURL = outputURL
+                    jobs[jobIndex].status = .success
+                    jobs[jobIndex].completedAt = Date()
+                    convertedCount += 1
+                    completedInRun += 1
+                }
+            } catch {
+                let message = error.localizedDescription
+                let failedTitle = await MainActor.run { jobs[jobIndex].displayTitle }
+                await MainActor.run {
+                    jobs[jobIndex].status = .failed(message)
+                    jobs[jobIndex].completedAt = Date()
+                }
+                Logger.shared.log("[ConvertView] Conversion failed for \(failedTitle): \(message)")
             }
         }
 
-        isConverting = false
-        let failures = jobs.filter {
-            if case .failed = $0.status { return true }
-            return false
-        }.count
-        status = failures == 0 ? "Conversion complete" : "Conversion finished with \(failures) failure(s)"
-        showToast(
-            title: failures == 0 ? "Converted \(convertedCount) file(s)" : "Converted \(convertedCount), Failed \(failures)",
-            icon: failures == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-        )
+        await MainActor.run {
+            isConverting = false
+            let failures = jobs.filter {
+                if case .failed = $0.status { return true }
+                return false
+            }.count
+            status = failures == 0 ? "Conversion complete" : "Conversion finished with \(failures) failure(s)"
+            showToast(
+                title: failures == 0 ? "Converted \(completedInRun) file(s)" : "Converted \(completedInRun), Failed \(failures)",
+                icon: failures == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
+        }
     }
 
     private func addConvertedToMusicQueue() async {
-        let outputs = successfulOutputs
-        guard !outputs.isEmpty else { return }
+        let successfulJobs = await MainActor.run {
+            jobs.filter {
+                if case .success = $0.status, $0.outputURL != nil { return true }
+                return false
+            }
+        }
+        guard !successfulJobs.isEmpty else { return }
 
         var convertedSongs: [SongMetadata] = []
-        for outputURL in outputs {
-            if let song = try? await SongMetadata.fromURL(outputURL) {
+        for job in successfulJobs {
+            guard let outputURL = job.outputURL else { continue }
+            if let preserved = job.preservedMetadata {
+                var song = preserved.makeSongMetadata(for: outputURL)
+                if song.durationMs == 0, let parsed = try? await SongMetadata.fromURL(outputURL, includeArtwork: false) {
+                    song.durationMs = parsed.durationMs
+                }
+                convertedSongs.append(song)
+            } else if let song = try? await SongMetadata.fromURL(outputURL) {
                 convertedSongs.append(song)
             } else {
                 Logger.shared.log("[ConvertView] Failed to parse converted file: \(outputURL.lastPathComponent)")
@@ -453,13 +510,17 @@ struct ConvertView: View {
         }
 
         guard !convertedSongs.isEmpty else {
-            showToast(title: "No converted files were queue-ready", icon: "xmark.circle.fill")
+            await MainActor.run {
+                showToast(title: "No converted files were queue-ready", icon: "xmark.circle.fill")
+            }
             return
         }
 
-        songs.append(contentsOf: convertedSongs)
-        status = "Added \(convertedSongs.count) converted song(s) to queue"
-        showToast(title: "Added \(convertedSongs.count) to Music queue", icon: "music.note.list")
+        await MainActor.run {
+            songs.append(contentsOf: convertedSongs)
+            status = "Added \(convertedSongs.count) converted song(s) to queue"
+            showToast(title: "Added \(convertedSongs.count) to Music queue", icon: "music.note.list")
+        }
     }
 
     private func icon(for status: ConversionJobStatus) -> String {
@@ -467,7 +528,7 @@ struct ConvertView: View {
         case .queued:
             return "clock"
         case .converting:
-            return "arrow.triangle.2.circlepath"
+            return "hourglass"
         case .success:
             return "checkmark.circle.fill"
         case .failed:
